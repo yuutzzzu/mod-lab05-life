@@ -1,23 +1,32 @@
 name: .NET
 
-
-on: [push, pull_request]
-
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
- build:
-
+  build:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
+    
     - name: Setup .NET
-      uses: actions/setup-dotnet@v1
+      uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: '8.x'
+        dotnet-version: '8.0.x'
+    
+    - name: Clean solution
+      run: dotnet clean GameOfLife.sln
+    
     - name: Restore dependencies
-      run: dotnet restore
+      run: dotnet restore GameOfLife.sln
+    
     - name: Build
-      run: dotnet build --no-restore
+      run: dotnet build GameOfLife.sln --no-restore
+    
     - name: Test
-      run: dotnet test --no-build --verbosity normal
+      run: dotnet test GameOfLife.sln --no-build --verbosity normal
