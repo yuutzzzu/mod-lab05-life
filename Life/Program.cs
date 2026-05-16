@@ -25,7 +25,7 @@ namespace cli_life
     public class Cluster
     {
         public List<(int x, int y)> Cells { get; set; } = new List<(int x, int y)>();
-        public string Classification { get; set; } = "Unknown";
+        public string Classification { get; set; } = "Unknown"; 
 
         public int GetWidth()
         {
