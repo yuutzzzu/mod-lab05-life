@@ -6,6 +6,8 @@ using System.Text.Json;
 using System.Threading;
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Drawing;
+using System.Drawing.Imaging;
 
 [assembly: InternalsVisibleTo("cli_life.Tests")]
 
@@ -37,7 +39,7 @@ namespace cli_life
         {
             if (Cells.Count == 0) return 0;
             int minY = Cells.Min(c => c.y);
-            int maxY = Cells.Max(c => c.y);
+            int maxY = Cells.Max(c => c.y); 
             return maxY - minY + 1;
         }
 
@@ -322,7 +324,7 @@ namespace cli_life
             }
 
             SaveResultsToTxt(allResults);
-            SaveResultsToCsv(allResults);
+            PlotGenerator.GeneratePlot(allResults);
 
             Console.WriteLine("=== ЭКСПЕРИМЕНТЫ ЗАВЕРШЕНЫ ===");
             Console.WriteLine($"Результаты сохранены в папке Data/");
@@ -417,224 +419,360 @@ namespace cli_life
             Console.WriteLine($"Сохранено TXT: {filePath}");
         }
 
-        public static void SaveResultsToCsv(List<ExperimentResult> results)
+        public static class PlotGenerator
         {
-            string filePath = "Data/data.csv";
-            using (StreamWriter writer = new StreamWriter(filePath))
+            public static void GeneratePlot(List<StabilityExperiment.ExperimentResult> results)
             {
-                writer.WriteLine("Attempt,Density,GenerationsToStable,FinalLiveCells,ReachedMaxGenerations");
+                Directory.CreateDirectory("Data");
 
-                int attempt = 1;
-                foreach (var result in results)
+                string filePath = "Data/plot.png";
+
+                int width = 1000;
+                int height = 700;
+                int margin = 80;
+
+                using (Bitmap bitmap = new Bitmap(width, height))
+                using (Graphics g = Graphics.FromImage(bitmap))
                 {
-                    writer.WriteLine($"{attempt},{result.Density.ToString(CultureInfo.InvariantCulture)},{result.GenerationsToStable},{result.FinalLiveCells},{(result.ReachedMaxGenerations ? 1 : 0)}");
-                    attempt++;
-                }
-            }
+                    g.Clear(Color.White);
 
-            Console.WriteLine($"Сохранено CSV: {filePath}");
-        }
-    }
+                    Font titleFont = new Font("Arial", 16);
+                    Font labelFont = new Font("Arial", 10);
 
-    class Program
-    {
-        static Board board;
-        static SimulationSettings settings;
-        static bool running = true;
-        static bool showStats = false;
-        static int currentDelay;
+                    Pen axisPen = new Pen(Color.Black, 2);
+                    Pen graphPen = new Pen(Color.Blue, 2);
 
-        static void Reset()
-        {
-            board = new Board(
-                width: settings.Width,
-                height: settings.Height,
-                cellSize: settings.CellSize,
-                liveDensity: settings.LiveDensity);
-        }
+                    Brush pointBrush = Brushes.Red;
 
-        static void LoadSettings(string filename = "settings.json")
-        {
-            if (File.Exists(filename))
-            {
-                string json = File.ReadAllText(filename);
-                settings = JsonSerializer.Deserialize<SimulationSettings>(json);
-            }
-            else
-            {
-                settings = new SimulationSettings
-                {
-                    Width = 50,
-                    Height = 20,
-                    CellSize = 1,
-                    LiveDensity = 0.5,
-                    DelayMs = 500
-                };
-                SaveSettings(filename);
-            }
-            currentDelay = settings.DelayMs;
-        }
+                    int plotWidth = width - 2 * margin;
+                    int plotHeight = height - 2 * margin;
 
-        static void SaveSettings(string filename = "settings.json")
-        {
-            string json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(filename, json);
-        }
+                    g.DrawLine(axisPen,
+                        margin,
+                        height - margin,
+                        width - margin,
+                        height - margin);
 
-        static void Render()
-        {
-            for (int row = 0; row < board.Rows; row++)
-            {
-                for (int col = 0; col < board.Columns; col++)
-                {
-                    var cell = board.Cells[col, row];
-                    Console.Write(cell.IsAlive ? '*' : ' ');
-                }
-                Console.Write('\n');
-            }
-        }
+                    g.DrawLine(axisPen,
+                        margin,
+                        margin,
+                        margin,
+                        height - margin);
 
-        static void ShowMenu()
-        {
-            Console.SetCursorPosition(0, board.Rows + 1);
-            Console.WriteLine("Commands: [S]ave | [L]oad | [R]eset | [Space] pause/run | [.] step | [I]nfo | [E]xperiment | [Q]uit | [+]/[-] speed");
-        }
+                    g.DrawString(
+                        "Переход в стабильное состояние",
+                        titleFont,
+                        Brushes.Black,
+                        width / 2 - 170,
+                        20);
 
-        static void HandleInput()
-        {
-            if (!Console.KeyAvailable) return;
-            var key = Console.ReadKey(true).Key;
-            switch (key)
-            {
-                case ConsoleKey.S:
-                    board.SaveToFile("saved_state.txt");
-                    Console.SetCursorPosition(0, board.Rows + 2);
-                    Console.WriteLine("State saved to saved_state.txt");
-                    break;
-                case ConsoleKey.L:
-                    if (File.Exists("saved_state.txt"))
+                    g.DrawString(
+                        "Плотность заполнения",
+                        labelFont,
+                        Brushes.Black,
+                        width / 2 - 70,
+                        height - 40);
+
+                    g.DrawString(
+                        "Поколения",
+                        labelFont,
+                        Brushes.Black,
+                        10,
+                        height / 2);
+
+                    var grouped = results
+                        .GroupBy(r => r.Density)
+                        .OrderBy(g => g.Key)
+                        .Select(g => new
+                        {
+                            Density = g.Key,
+                            AvgGenerations = g.Average(r => r.GenerationsToStable)
+                        })
+                        .ToList();
+
+                    double maxY = grouped.Max(x => x.AvgGenerations);
+
+                    if (maxY <= 0)
+                        maxY = 1;
+
+                    PointF[] points = new PointF[grouped.Count];
+
+                    for (int i = 0; i < grouped.Count; i++)
                     {
-                        board.LoadFromFile("saved_state.txt");
-                        Console.SetCursorPosition(0, board.Rows + 2);
-                        Console.WriteLine("State loaded from saved_state.txt");
+                        double density = grouped[i].Density;
+                        double generations = grouped[i].AvgGenerations;
+
+                        float x = margin + (float)(density * plotWidth);
+
+                        float y = (height - margin) -
+                                  (float)((generations / maxY) * plotHeight);
+
+                        points[i] = new PointF(x, y);
                     }
-                    break;
-                case ConsoleKey.R:
-                    Reset();
-                    break;
-                case ConsoleKey.Spacebar:
-                    running = !running;
-                    break;
-                case ConsoleKey.OemPeriod:
-                    if (!running)
+
+                    if (points.Length > 1)
                     {
-                        board.Advance();
+                        g.DrawLines(graphPen, points);
+                    }
+
+                    foreach (var point in points)
+                    {
+                        g.FillEllipse(pointBrush,
+                            point.X - 4,
+                            point.Y - 4,
+                            8,
+                            8);
+                    }
+
+                    for (int i = 0; i <= 10; i++)
+                    {
+                        float x = margin + i * (plotWidth / 10f);
+
+                        double densityLabel = i / 10.0;
+
+                        g.DrawLine(Pens.Gray,
+                            x,
+                            height - margin,
+                            x,
+                            height - margin + 5);
+
+                        g.DrawString(
+                            densityLabel.ToString("0.0", CultureInfo.InvariantCulture),
+                            labelFont,
+                            Brushes.Black,
+                            x - 10,
+                            height - margin + 10);
+                    }
+
+                    for (int i = 0; i <= 10; i++)
+                    {
+                        float y = (height - margin) - i * (plotHeight / 10f);
+
+                        double value = maxY * i / 10.0;
+
+                        g.DrawLine(Pens.Gray,
+                            margin - 5,
+                            y,
+                            margin,
+                            y);
+
+                        g.DrawString(
+                            ((int)value).ToString(),
+                            labelFont,
+                            Brushes.Black,
+                            20,
+                            y - 7);
+                    }
+
+                    bitmap.Save(filePath, ImageFormat.Png);
+                }
+
+                Console.WriteLine($"График сохранен: {filePath}");
+            }
+        }
+
+
+
+        class Program
+        {
+            static Board board;
+            static SimulationSettings settings;
+            static bool running = true;
+            static bool showStats = false;
+            static int currentDelay;
+
+            static void Reset()
+            {
+                board = new Board(
+                    width: settings.Width,
+                    height: settings.Height,
+                    cellSize: settings.CellSize,
+                    liveDensity: settings.LiveDensity);
+            }
+
+            static void LoadSettings(string filename = "settings.json")
+            {
+                if (File.Exists(filename))
+                {
+                    string json = File.ReadAllText(filename);
+                    settings = JsonSerializer.Deserialize<SimulationSettings>(json);
+                }
+                else
+                {
+                    settings = new SimulationSettings
+                    {
+                        Width = 50,
+                        Height = 20,
+                        CellSize = 1,
+                        LiveDensity = 0.5,
+                        DelayMs = 500
+                    };
+                    SaveSettings(filename);
+                }
+                currentDelay = settings.DelayMs;
+            }
+
+            static void SaveSettings(string filename = "settings.json")
+            {
+                string json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(filename, json);
+            }
+
+            static void Render()
+            {
+                for (int row = 0; row < board.Rows; row++)
+                {
+                    for (int col = 0; col < board.Columns; col++)
+                    {
+                        var cell = board.Cells[col, row];
+                        Console.Write(cell.IsAlive ? '*' : ' ');
+                    }
+                    Console.Write('\n');
+                }
+            }
+
+            static void ShowMenu()
+            {
+                Console.SetCursorPosition(0, board.Rows + 1);
+                Console.WriteLine("Commands: [S]ave | [L]oad | [R]eset | [Space] pause/run | [.] step | [I]nfo | [E]xperiment | [Q]uit | [+]/[-] speed");
+            }
+
+            static void HandleInput()
+            {
+                if (!Console.KeyAvailable) return;
+                var key = Console.ReadKey(true).Key;
+                switch (key)
+                {
+                    case ConsoleKey.S:
+                        board.SaveToFile("saved_state.txt");
+                        Console.SetCursorPosition(0, board.Rows + 2);
+                        Console.WriteLine("State saved to saved_state.txt");
+                        break;
+                    case ConsoleKey.L:
+                        if (File.Exists("saved_state.txt"))
+                        {
+                            board.LoadFromFile("saved_state.txt");
+                            Console.SetCursorPosition(0, board.Rows + 2);
+                            Console.WriteLine("State loaded from saved_state.txt");
+                        }
+                        break;
+                    case ConsoleKey.R:
+                        Reset();
+                        break;
+                    case ConsoleKey.Spacebar:
+                        running = !running;
+                        break;
+                    case ConsoleKey.OemPeriod:
+                        if (!running)
+                        {
+                            board.Advance();
+                            Console.Clear();
+                            Render();
+                            ShowMenu();
+                            if (showStats) board.PrintStatistics();
+                        }
+                        break;
+                    case ConsoleKey.I:
+                        showStats = !showStats;
+                        Console.SetCursorPosition(0, board.Rows + 2);
+                        Console.WriteLine($"Statistics display: {(showStats ? "ON" : "OFF")}     ");
+                        if (showStats) board.PrintStatistics();
+                        break;
+                    case ConsoleKey.E:
+                        RunExperiment();
+                        break;
+                    case ConsoleKey.Q:
+                        Environment.Exit(0);
+                        break;
+                    case ConsoleKey.Add:
+                    case ConsoleKey.OemPlus:
+                        currentDelay = Math.Max(50, currentDelay - 50);
+                        break;
+                    case ConsoleKey.Subtract:
+                    case ConsoleKey.OemMinus:
+                        currentDelay = Math.Min(1000, currentDelay + 50);
+                        break;
+                }
+            }
+
+            static void RunExperiment()
+            {
+                Console.Clear();
+                Console.WriteLine("=== ЗАПУСК ЭКСПЕРИМЕНТА ===");
+                Console.WriteLine("Параметры эксперимента:");
+                Console.WriteLine($"Размер поля: {settings.Width}x{settings.Height}");
+                Console.WriteLine();
+
+                List<double> densities = new List<double>();
+                for (double d = 0.05; d <= 0.95 + 0.0001; d += 0.05)
+                {
+                    densities.Add(Math.Round(d, 2));
+                }
+
+                Console.WriteLine("Исследуемые плотности:");
+                foreach (var d in densities)
+                {
+                    Console.Write($"{d.ToString(CultureInfo.InvariantCulture)} ");
+                }
+                Console.WriteLine("\n");
+
+                Console.Write("Количество попыток для каждой плотности (рекомендуется 10-30): ");
+                string input = Console.ReadLine();
+                int attempts = 10;
+                if (!int.TryParse(input, out attempts) || attempts < 1)
+                {
+                    attempts = 10;
+                    Console.WriteLine($"Используем значение по умолчанию: {attempts}");
+                }
+
+                Console.WriteLine("\nНачинаю эксперименты...");
+                Console.WriteLine("Это может занять несколько минут. Результаты будут сохранены в папке Data/\n");
+
+                var results = StabilityExperiment.RunExperiments(
+                    settings.Width,
+                    settings.Height,
+                    settings.CellSize,
+                    densities,
+                    attempts
+                );
+
+                Console.WriteLine("\nНажмите любую клавишу для продолжения...");
+                Console.ReadKey();
+
+                Reset();
+                running = true;
+                Console.Clear();
+            }
+
+            static void Main(string[] args)
+            {
+                Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
+                Thread.CurrentThread.CurrentUICulture = CultureInfo.InvariantCulture;
+
+                LoadSettings();
+                Reset();
+
+                while (true)
+                {
+                    if (running)
+                    {
                         Console.Clear();
                         Render();
                         ShowMenu();
                         if (showStats) board.PrintStatistics();
+                        board.Advance();
+                        Thread.Sleep(currentDelay);
                     }
-                    break;
-                case ConsoleKey.I:
-                    showStats = !showStats;
-                    Console.SetCursorPosition(0, board.Rows + 2);
-                    Console.WriteLine($"Statistics display: {(showStats ? "ON" : "OFF")}     ");
-                    if (showStats) board.PrintStatistics();
-                    break;
-                case ConsoleKey.E:
-                    RunExperiment();
-                    break;
-                case ConsoleKey.Q:
-                    Environment.Exit(0);
-                    break;
-                case ConsoleKey.Add:
-                case ConsoleKey.OemPlus:
-                    currentDelay = Math.Max(50, currentDelay - 50);
-                    break;
-                case ConsoleKey.Subtract:
-                case ConsoleKey.OemMinus:
-                    currentDelay = Math.Min(1000, currentDelay + 50);
-                    break;
-            }
-        }
-
-        static void RunExperiment()
-        {
-            Console.Clear();
-            Console.WriteLine("=== ЗАПУСК ЭКСПЕРИМЕНТА ===");
-            Console.WriteLine("Параметры эксперимента:");
-            Console.WriteLine($"Размер поля: {settings.Width}x{settings.Height}");
-            Console.WriteLine();
-
-            List<double> densities = new List<double>();
-            for (double d = 0.05; d <= 0.95 + 0.0001; d += 0.05)
-            {
-                densities.Add(Math.Round(d, 2));
-            }
-
-            Console.WriteLine("Исследуемые плотности:");
-            foreach (var d in densities)
-            {
-                Console.Write($"{d.ToString(CultureInfo.InvariantCulture)} ");
-            }
-            Console.WriteLine("\n");
-
-            Console.Write("Количество попыток для каждой плотности (рекомендуется 10-30): ");
-            string input = Console.ReadLine();
-            int attempts = 10;
-            if (!int.TryParse(input, out attempts) || attempts < 1)
-            {
-                attempts = 10;
-                Console.WriteLine($"Используем значение по умолчанию: {attempts}");
-            }
-
-            Console.WriteLine("\nНачинаю эксперименты...");
-            Console.WriteLine("Это может занять несколько минут. Результаты будут сохранены в папке Data/\n");
-
-            var results = StabilityExperiment.RunExperiments(
-                settings.Width,
-                settings.Height,
-                settings.CellSize,
-                densities,
-                attempts
-            );
-
-            Console.WriteLine("\nНажмите любую клавишу для продолжения...");
-            Console.ReadKey();
-
-            Reset();
-            running = true;
-            Console.Clear();
-        }
-
-        static void Main(string[] args)
-        {
-            Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
-            Thread.CurrentThread.CurrentUICulture = CultureInfo.InvariantCulture;
-
-            LoadSettings();
-            Reset();
-
-            while (true)
-            {
-                if (running)
-                {
-                    Console.Clear();
-                    Render();
-                    ShowMenu();
-                    if (showStats) board.PrintStatistics();
-                    board.Advance();
-                    Thread.Sleep(currentDelay);
+                    else
+                    {
+                        Console.Clear();
+                        Render();
+                        ShowMenu();
+                        if (showStats) board.PrintStatistics();
+                        Thread.Sleep(100);
+                    }
+                    HandleInput();
                 }
-                else
-                {
-                    Console.Clear();
-                    Render();
-                    ShowMenu();
-                    if (showStats) board.PrintStatistics();
-                    Thread.Sleep(100);
-                }
-                HandleInput();
             }
         }
     }
